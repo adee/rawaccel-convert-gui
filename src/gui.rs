@@ -1,4 +1,7 @@
+use rawaccel_convert::generate_curve::{LIBINPUT_POINT_COUNT_MAX, LIBINPUT_POINT_COUNT_MIN};
 use rawaccel_convert::types::{AccelArgs, AccelMode, CapMode, CurvegenResult, PointScaling};
+
+const GSETTINGS_SCHEMA: &str = "org.gnome.desktop.peripherals.mouse";
 
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
 pub struct RawaccelConvertSettings {
@@ -98,6 +101,11 @@ pub struct RawaccelConvertGui {
     curvegen_export: CurvegenResult,
     #[serde(skip)]
     export_point_scaling: PointScaling,
+
+    #[serde(skip)]
+    gsettings_status: String,
+    #[serde(skip)]
+    gsettings_failed: bool,
 }
 
 impl Default for RawaccelConvertGui {
@@ -119,6 +127,9 @@ impl Default for RawaccelConvertGui {
                 step_size: 1.0,
             },
             export_point_scaling: PointScaling::Sens,
+
+            gsettings_status: String::default(),
+            gsettings_failed: false,
         }
     }
 }
@@ -1119,53 +1130,58 @@ fn add_points_dump(rawaccel_convert_gui: &mut RawaccelConvertGui, ui: &mut egui:
                 })
         });
 
+        let libinput_export = match rawaccel_convert_gui.export_point_scaling {
+            PointScaling::Libinput | PointScaling::LibinputDebug => true,
+            _ => false,
+        };
+
         egui::Grid::new("point_count_grid").show(ui, |ui| {
+            if libinput_export {
+                ui.hyperlink_to(
+                    format!("Libinput accel guide"),
+                    "https://github.com/Kuuuube/rawaccel_convert/blob/master/docs/libinput.md",
+                );
+                ui.end_row();
+            }
+
+            //libinput only accepts curves within its own point count limits
+            let (min_point_count, max_point_count) = match libinput_export {
+                true => (LIBINPUT_POINT_COUNT_MIN, LIBINPUT_POINT_COUNT_MAX),
+                false => (2, u32::MAX),
+            };
             let mut color = ui.visuals().text_color();
             match rawaccel_convert_gui
                 .settings
                 .point_count_string
                 .parse::<u32>()
             {
-                Ok(ok) => match rawaccel_convert_gui.export_point_scaling {
-                    PointScaling::Libinput | PointScaling::LibinputDebug => {
-                        if ok != 64 {
-                            color = ui.visuals().error_fg_color;
-                            rawaccel_convert_gui.settings.point_count_string = "64".to_string();
-                        }
+                Ok(ok) => {
+                    if ok >= min_point_count && ok <= max_point_count {
+                        rawaccel_convert_gui.accel_args.point_count = ok;
+                    } else {
+                        color = ui.visuals().error_fg_color;
                     }
-                    _ => {
-                        if ok > 1 {
-                            rawaccel_convert_gui.accel_args.point_count = ok;
-                        } else {
-                            color = ui.visuals().error_fg_color;
-                        }
-                    }
-                },
+                }
                 Err(_) => {
                     color = ui.visuals().error_fg_color;
                 }
             }
-            match rawaccel_convert_gui.export_point_scaling {
-                PointScaling::Libinput | PointScaling::LibinputDebug => {
-                    ui.hyperlink_to(
-                        format!("Libinput accel guide"),
-                        "https://github.com/Kuuuube/rawaccel_convert/blob/master/docs/libinput.md",
-                    );
-                }
-                _ => {
-                    ui.add_sized(
-                        ui.available_size(),
-                        egui::Label::new(egui::RichText::new("Max Number of Points").color(color))
-                            .selectable(false),
-                    );
-                    ui.add_sized(
-                        ui.available_size(),
-                        egui::TextEdit::singleline(
-                            &mut rawaccel_convert_gui.settings.point_count_string,
-                        ),
-                    );
-                }
+            let point_count_label = match libinput_export {
+                true => format!(
+                    "Number of Points ({}-{})",
+                    LIBINPUT_POINT_COUNT_MIN, LIBINPUT_POINT_COUNT_MAX
+                ),
+                false => "Max Number of Points".to_string(),
             };
+            ui.add_sized(
+                ui.available_size(),
+                egui::Label::new(egui::RichText::new(point_count_label).color(color))
+                    .selectable(false),
+            );
+            ui.add_sized(
+                ui.available_size(),
+                egui::TextEdit::singleline(&mut rawaccel_convert_gui.settings.point_count_string),
+            );
         });
 
         ui.add_sized(
@@ -1182,18 +1198,15 @@ fn add_points_dump(rawaccel_convert_gui: &mut RawaccelConvertGui, ui: &mut egui:
                 )
             });
 
-        match rawaccel_convert_gui.export_point_scaling {
-            PointScaling::Libinput | PointScaling::LibinputDebug => {
-                ui.add_sized(
-                    [ui.available_width(), 1.0],
-                    egui::Label::new("Steps").selectable(false),
-                );
-                ui.add_sized(
-                    [ui.available_width(), 1.0],
-                    egui::TextEdit::singleline(&mut rawaccel_convert_gui.libinput_steps),
-                );
-            }
-            _ => {}
+        if libinput_export {
+            ui.add_sized(
+                [ui.available_width(), 1.0],
+                egui::Label::new("Steps").selectable(false),
+            );
+            ui.add_sized(
+                [ui.available_width(), 1.0],
+                egui::TextEdit::singleline(&mut rawaccel_convert_gui.libinput_steps),
+            );
         }
 
         let generate_points = ui.add_sized(
@@ -1221,33 +1234,172 @@ fn add_points_dump(rawaccel_convert_gui: &mut RawaccelConvertGui, ui: &mut egui:
         }
 
         if generate_points.clicked() {
-            let mut export_accel_args = rawaccel_convert_gui.accel_args.clone();
-            export_accel_args.point_scaling = rawaccel_convert_gui.export_point_scaling.clone();
-            rawaccel_convert_gui.curvegen_export =
-                rawaccel_convert::generate_curve::generate_curve(&export_accel_args);
-            rawaccel_convert_gui.libinput_steps =
-                rawaccel_convert_gui.curvegen_export.step_size.to_string();
-            rawaccel_convert_gui.points = match export_accel_args.point_scaling {
-                rawaccel_convert::types::PointScaling::Libinput => {
-                    let mut output_string = String::default();
-                    for point in &rawaccel_convert_gui.curvegen_export.points {
-                        output_string += &(point.y.to_string() + " ");
-                    }
-                    output_string
-                }
-                rawaccel_convert::types::PointScaling::LookupVelocity | rawaccel_convert::types::PointScaling::LookupSens  => {
-                    let mut output_string = String::default();
-                    for point in &rawaccel_convert_gui.curvegen_export.points {
-                        output_string += &format!("{},{};\n", point.x, point.y);
-                    }
-                    output_string
-                }
-                _ => {
-                    format!("{:?}", rawaccel_convert_gui.curvegen_export.points)
-                }
+            generate_export_points(rawaccel_convert_gui);
+        }
+
+        //libinputdebug points cannot be applied to libinput directly
+        match rawaccel_convert_gui.export_point_scaling {
+            PointScaling::Libinput => {
+                add_gsettings_buttons(rawaccel_convert_gui, ui);
             }
+            _ => {}
         }
     });
+}
+
+fn generate_export_points(rawaccel_convert_gui: &mut RawaccelConvertGui) {
+    let mut export_accel_args = rawaccel_convert_gui.accel_args.clone();
+    export_accel_args.point_scaling = rawaccel_convert_gui.export_point_scaling.clone();
+    rawaccel_convert_gui.curvegen_export =
+        rawaccel_convert::generate_curve::generate_curve(&export_accel_args);
+    rawaccel_convert_gui.libinput_steps =
+        rawaccel_convert_gui.curvegen_export.step_size.to_string();
+    rawaccel_convert_gui.points = match export_accel_args.point_scaling {
+        rawaccel_convert::types::PointScaling::Libinput => {
+            let mut output_string = String::default();
+            for point in &rawaccel_convert_gui.curvegen_export.points {
+                output_string += &(point.y.to_string() + " ");
+            }
+            output_string
+        }
+        rawaccel_convert::types::PointScaling::LookupVelocity
+        | rawaccel_convert::types::PointScaling::LookupSens => {
+            let mut output_string = String::default();
+            for point in &rawaccel_convert_gui.curvegen_export.points {
+                output_string += &format!("{},{};\n", point.x, point.y);
+            }
+            output_string
+        }
+        _ => {
+            format!("{:?}", rawaccel_convert_gui.curvegen_export.points)
+        }
+    }
+}
+
+//formatted as gvariant doubles, `{:?}` keeps the decimal point on whole numbers
+fn gsettings_step_value(rawaccel_convert_gui: &RawaccelConvertGui) -> String {
+    return format!("{:?}", rawaccel_convert_gui.curvegen_export.step_size);
+}
+
+fn gsettings_points_value(rawaccel_convert_gui: &RawaccelConvertGui) -> String {
+    let mut points: Vec<String> = vec![];
+    for point in &rawaccel_convert_gui.curvegen_export.points {
+        points.push(format!("{:?}", point.y));
+    }
+    return format!("[{}]", points.join(", "));
+}
+
+//quoted for the shell, unlike the values passed to gsettings directly
+fn gsettings_commands(rawaccel_convert_gui: &RawaccelConvertGui) -> String {
+    let mut commands = String::default();
+    commands += &format!(
+        "gsettings set {} custom-accel-step {}\n",
+        GSETTINGS_SCHEMA,
+        gsettings_step_value(rawaccel_convert_gui)
+    );
+    commands += &format!(
+        "gsettings set {} custom-accel-points \"{}\"\n",
+        GSETTINGS_SCHEMA,
+        gsettings_points_value(rawaccel_convert_gui)
+    );
+    commands += &format!(
+        "gsettings set {} accel-profile \"'custom'\"\n",
+        GSETTINGS_SCHEMA
+    );
+    return commands;
+}
+
+fn add_gsettings_buttons(rawaccel_convert_gui: &mut RawaccelConvertGui, ui: &mut egui::Ui) {
+    add_gsettings_apply_button(rawaccel_convert_gui, ui);
+
+    let copy_gsettings_commands = ui.add_sized(
+        [ui.available_width(), 1.0],
+        egui::Button::new("Copy gsettings Commands"),
+    );
+    if copy_gsettings_commands.clicked() {
+        generate_export_points(rawaccel_convert_gui);
+        let commands = gsettings_commands(rawaccel_convert_gui);
+        ui.ctx().output_mut(|output| output.copied_text = commands);
+        rawaccel_convert_gui.gsettings_status = "Copied gsettings commands".to_string();
+        rawaccel_convert_gui.gsettings_failed = false;
+    }
+
+    if !rawaccel_convert_gui.gsettings_status.is_empty() {
+        let color = match rawaccel_convert_gui.gsettings_failed {
+            true => ui.visuals().error_fg_color,
+            false => ui.visuals().text_color(),
+        };
+        ui.add_sized(
+            [ui.available_width(), 1.0],
+            egui::Label::new(
+                egui::RichText::new(rawaccel_convert_gui.gsettings_status.clone())
+                    .small()
+                    .color(color),
+            )
+            .selectable(false),
+        );
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn add_gsettings_apply_button(rawaccel_convert_gui: &mut RawaccelConvertGui, ui: &mut egui::Ui) {
+    let apply_gsettings_button = ui.add_sized(
+        [ui.available_width(), 1.0],
+        egui::Button::new("Apply With gsettings"),
+    );
+    if apply_gsettings_button.clicked() {
+        generate_export_points(rawaccel_convert_gui);
+        apply_gsettings(rawaccel_convert_gui);
+    }
+}
+
+//gsettings cannot be run from the web app
+#[cfg(target_arch = "wasm32")]
+fn add_gsettings_apply_button(_rawaccel_convert_gui: &mut RawaccelConvertGui, _ui: &mut egui::Ui) {}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn apply_gsettings(rawaccel_convert_gui: &mut RawaccelConvertGui) {
+    //the profile is set last so the curve is never applied with stale points
+    let gsettings_keys = [
+        (
+            "custom-accel-step",
+            gsettings_step_value(rawaccel_convert_gui),
+        ),
+        (
+            "custom-accel-points",
+            gsettings_points_value(rawaccel_convert_gui),
+        ),
+        ("accel-profile", "'custom'".to_string()),
+    ];
+    for (key, value) in gsettings_keys {
+        match std::process::Command::new("gsettings")
+            .args(["set", GSETTINGS_SCHEMA, key, value.as_str()])
+            .output()
+        {
+            Ok(output) => {
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    rawaccel_convert_gui.gsettings_status = match stderr.is_empty() {
+                        true => format!("Setting {} failed", key),
+                        false => format!("Setting {} failed: {}", key, stderr),
+                    };
+                    rawaccel_convert_gui.gsettings_failed = true;
+                    return;
+                }
+            }
+            Err(err) => {
+                rawaccel_convert_gui.gsettings_status =
+                    format!("Running gsettings failed: {}", err);
+                rawaccel_convert_gui.gsettings_failed = true;
+                return;
+            }
+        }
+    }
+    rawaccel_convert_gui.gsettings_status = format!(
+        "Applied {} points with gsettings",
+        rawaccel_convert_gui.curvegen_export.points.len()
+    );
+    rawaccel_convert_gui.gsettings_failed = false;
 }
 
 fn unselectable_warn_if_debug_build(ui: &mut egui::Ui) {
