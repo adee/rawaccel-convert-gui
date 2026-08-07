@@ -35,6 +35,9 @@ pub struct RawaccelConvertSettings {
     pub output_offset_string: String,
 
     pub lookup_table_string: String,
+
+    pub screen_dpi_string: String,
+    pub screen_scaling_string: String,
 }
 
 impl Default for RawaccelConvertSettings {
@@ -77,6 +80,10 @@ impl Default for RawaccelConvertSettings {
 
             //lookup
             lookup_table_string: "".to_string(),
+
+            //windows
+            screen_dpi_string: "96".to_string(),
+            screen_scaling_string: "1.0".to_string(),
         }
     }
 }
@@ -386,6 +393,13 @@ impl eframe::App for RawaccelConvertGui {
                             add_apply_as(self, ui);
                             ui.end_row();
                         }
+                        AccelMode::Windows => {
+                            add_screen_dpi(self, ui);
+                            ui.end_row();
+
+                            add_screen_scaling(self, ui);
+                            ui.end_row();
+                        }
                         AccelMode::Noaccel => {}
                     }
                 });
@@ -450,6 +464,7 @@ fn get_point(x: f64, args: &AccelArgs) -> f64 {
             AccelMode::Lookup => {
                 rawaccel_convert::accel_curves::lookup::lookup(x, args).unwrap_or_default()
             }
+            AccelMode::Windows => rawaccel_convert::accel_curves::windows::windows(x, &args),
             AccelMode::Noaccel => rawaccel_convert::accel_curves::noaccel::noaccel(x, &args),
         };
     match args.point_scaling {
@@ -514,7 +529,14 @@ fn get_bounds(
 fn add_dpi(rawaccel_convert_gui: &mut RawaccelConvertGui, ui: &mut egui::Ui) {
     let mut color = ui.visuals().text_color();
     match rawaccel_convert_gui.settings.dpi_string.parse::<u32>() {
-        Ok(ok) => rawaccel_convert_gui.accel_args.dpi = ok,
+        //a zero dpi collapses the input speed axis, the windows curve outputs NaN for it
+        Ok(ok) => {
+            if ok > 0 {
+                rawaccel_convert_gui.accel_args.dpi = ok;
+            } else {
+                color = ui.visuals().error_fg_color;
+            }
+        }
         Err(_) => {
             color = ui.visuals().error_fg_color;
         }
@@ -610,6 +632,11 @@ fn add_curve_type(rawaccel_convert_gui: &mut RawaccelConvertGui, ui: &mut egui::
                     &mut rawaccel_convert_gui.accel_args.mode,
                     AccelMode::Lookup,
                     "Look Up Table",
+                );
+                ui.selectable_value(
+                    &mut rawaccel_convert_gui.accel_args.mode,
+                    AccelMode::Windows,
+                    "Windows",
                 );
             });
     });
@@ -1034,6 +1061,63 @@ fn add_lookup_table_box(rawaccel_convert_gui: &mut RawaccelConvertGui, ui: &mut 
         ui.available_size(),
         egui::TextEdit::singleline(&mut rawaccel_convert_gui.settings.lookup_table_string)
             .char_limit(usize::MAX),
+    );
+}
+
+fn add_screen_dpi(rawaccel_convert_gui: &mut RawaccelConvertGui, ui: &mut egui::Ui) {
+    let mut color = ui.visuals().text_color();
+    match rawaccel_convert_gui
+        .settings
+        .screen_dpi_string
+        .parse::<u32>()
+    {
+        Ok(ok) => {
+            if ok > 0 {
+                rawaccel_convert_gui.accel_args.screen_dpi = ok;
+            } else {
+                color = ui.visuals().error_fg_color;
+            }
+        }
+        Err(_) => {
+            color = ui.visuals().error_fg_color;
+        }
+    }
+    ui.add_sized(
+        ui.available_size(),
+        egui::Label::new(egui::RichText::new("Screen DPI").color(color)).selectable(false),
+    );
+    ui.add_sized(
+        ui.available_size(),
+        egui::TextEdit::singleline(&mut rawaccel_convert_gui.settings.screen_dpi_string),
+    );
+}
+
+fn add_screen_scaling(rawaccel_convert_gui: &mut RawaccelConvertGui, ui: &mut egui::Ui) {
+    let mut color = ui.visuals().text_color();
+    match rawaccel_convert_gui
+        .settings
+        .screen_scaling_string
+        .parse::<f64>()
+    {
+        //scaling divides the pointer speed, zero or less has no meaning
+        Ok(ok) => {
+            if ok > 0.0 {
+                rawaccel_convert_gui.accel_args.screen_scaling_factor = ok;
+            } else {
+                color = ui.visuals().error_fg_color;
+            }
+        }
+        Err(_) => {
+            color = ui.visuals().error_fg_color;
+        }
+    }
+    ui.add_sized(
+        ui.available_size(),
+        egui::Label::new(egui::RichText::new("Screen Scaling").color(color)).selectable(false),
+    );
+    ui.add_sized(
+        ui.available_size(),
+        egui::TextEdit::singleline(&mut rawaccel_convert_gui.settings.screen_scaling_string),
     );
 }
 
