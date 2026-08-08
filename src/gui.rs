@@ -1417,6 +1417,11 @@ fn gsettings_commands(rawaccel_convert_gui: &RawaccelConvertGui) -> Option<Strin
 }
 
 fn add_gsettings_buttons(rawaccel_convert_gui: &mut RawaccelConvertGui, ui: &mut egui::Ui) {
+    //these change system settings, keep them away from the generate points button
+    ui.add_space(24.0);
+    ui.separator();
+    ui.add_space(8.0);
+
     add_gsettings_apply_button(rawaccel_convert_gui, ui);
 
     let copy_gsettings_commands = ui.add_sized(
