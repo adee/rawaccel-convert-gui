@@ -2,6 +2,7 @@ use rawaccel_convert::generate_curve::{LIBINPUT_POINT_COUNT_MAX, LIBINPUT_POINT_
 use rawaccel_convert::types::{AccelArgs, AccelMode, CapMode, CurvegenResult, PointScaling};
 
 const GSETTINGS_SCHEMA: &str = "org.gnome.desktop.peripherals.mouse";
+const STEPS_NOT_A_NUMBER: &str = "Steps is not a number";
 
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
 pub struct RawaccelConvertSettings {
@@ -103,6 +104,8 @@ pub struct RawaccelConvertGui {
     #[serde(skip)]
     libinput_steps: String,
     #[serde(skip)]
+    freeze_libinput_steps: bool,
+    #[serde(skip)]
     curvegen: CurvegenResult,
     #[serde(skip)]
     curvegen_export: CurvegenResult,
@@ -125,6 +128,7 @@ impl Default for RawaccelConvertGui {
 
             points: String::default(),
             libinput_steps: String::default(),
+            freeze_libinput_steps: false,
             curvegen: CurvegenResult {
                 points: vec![],
                 step_size: 1.0,
@@ -1283,10 +1287,23 @@ fn add_points_dump(rawaccel_convert_gui: &mut RawaccelConvertGui, ui: &mut egui:
             });
 
         if libinput_export {
-            ui.add_sized(
-                [ui.available_width(), 1.0],
-                egui::Label::new("Steps").selectable(false),
-            );
+            let mut color = ui.visuals().text_color();
+            if !rawaccel_convert_gui.libinput_steps.is_empty()
+                && rawaccel_convert_gui
+                    .libinput_steps
+                    .trim()
+                    .parse::<f64>()
+                    .is_err()
+            {
+                color = ui.visuals().error_fg_color;
+            }
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::Label::new(egui::RichText::new("Steps").color(color)).selectable(false),
+                );
+                //a frozen step is kept through regeneration so a hand picked value is not lost
+                ui.toggle_value(&mut rawaccel_convert_gui.freeze_libinput_steps, "Freeze");
+            });
             ui.add_sized(
                 [ui.available_width(), 1.0],
                 egui::TextEdit::singleline(&mut rawaccel_convert_gui.libinput_steps),
@@ -1336,8 +1353,10 @@ fn generate_export_points(rawaccel_convert_gui: &mut RawaccelConvertGui) {
     export_accel_args.point_scaling = rawaccel_convert_gui.export_point_scaling.clone();
     rawaccel_convert_gui.curvegen_export =
         rawaccel_convert::generate_curve::generate_curve(&export_accel_args);
-    rawaccel_convert_gui.libinput_steps =
-        rawaccel_convert_gui.curvegen_export.step_size.to_string();
+    if !rawaccel_convert_gui.freeze_libinput_steps {
+        rawaccel_convert_gui.libinput_steps =
+            rawaccel_convert_gui.curvegen_export.step_size.to_string();
+    }
     rawaccel_convert_gui.points = match export_accel_args.point_scaling {
         rawaccel_convert::types::PointScaling::Libinput => {
             let mut output_string = String::default();
@@ -1360,9 +1379,13 @@ fn generate_export_points(rawaccel_convert_gui: &mut RawaccelConvertGui) {
     }
 }
 
-//formatted as gvariant doubles, `{:?}` keeps the decimal point on whole numbers
-fn gsettings_step_value(rawaccel_convert_gui: &RawaccelConvertGui) -> String {
-    return format!("{:?}", rawaccel_convert_gui.curvegen_export.step_size);
+//read back from the steps box so a frozen step is what gets applied, not the generated one.
+//formatted as a gvariant double, `{:?}` keeps the decimal point on whole numbers
+fn gsettings_step_value(rawaccel_convert_gui: &RawaccelConvertGui) -> Option<String> {
+    match rawaccel_convert_gui.libinput_steps.trim().parse::<f64>() {
+        Ok(ok) => return Some(format!("{:?}", ok)),
+        Err(_) => return None,
+    }
 }
 
 fn gsettings_points_value(rawaccel_convert_gui: &RawaccelConvertGui) -> String {
@@ -1374,12 +1397,12 @@ fn gsettings_points_value(rawaccel_convert_gui: &RawaccelConvertGui) -> String {
 }
 
 //quoted for the shell, unlike the values passed to gsettings directly
-fn gsettings_commands(rawaccel_convert_gui: &RawaccelConvertGui) -> String {
+fn gsettings_commands(rawaccel_convert_gui: &RawaccelConvertGui) -> Option<String> {
     let mut commands = String::default();
     commands += &format!(
         "gsettings set {} custom-accel-step {}\n",
         GSETTINGS_SCHEMA,
-        gsettings_step_value(rawaccel_convert_gui)
+        gsettings_step_value(rawaccel_convert_gui)?
     );
     commands += &format!(
         "gsettings set {} custom-accel-points \"{}\"\n",
@@ -1390,7 +1413,7 @@ fn gsettings_commands(rawaccel_convert_gui: &RawaccelConvertGui) -> String {
         "gsettings set {} accel-profile \"'custom'\"\n",
         GSETTINGS_SCHEMA
     );
-    return commands;
+    return Some(commands);
 }
 
 fn add_gsettings_buttons(rawaccel_convert_gui: &mut RawaccelConvertGui, ui: &mut egui::Ui) {
@@ -1402,10 +1425,17 @@ fn add_gsettings_buttons(rawaccel_convert_gui: &mut RawaccelConvertGui, ui: &mut
     );
     if copy_gsettings_commands.clicked() {
         generate_export_points(rawaccel_convert_gui);
-        let commands = gsettings_commands(rawaccel_convert_gui);
-        ui.ctx().output_mut(|output| output.copied_text = commands);
-        rawaccel_convert_gui.gsettings_status = "Copied gsettings commands".to_string();
-        rawaccel_convert_gui.gsettings_failed = false;
+        match gsettings_commands(rawaccel_convert_gui) {
+            Some(commands) => {
+                ui.ctx().output_mut(|output| output.copied_text = commands);
+                rawaccel_convert_gui.gsettings_status = "Copied gsettings commands".to_string();
+                rawaccel_convert_gui.gsettings_failed = false;
+            }
+            None => {
+                rawaccel_convert_gui.gsettings_status = STEPS_NOT_A_NUMBER.to_string();
+                rawaccel_convert_gui.gsettings_failed = true;
+            }
+        }
     }
 
     if !rawaccel_convert_gui.gsettings_status.is_empty() {
@@ -1443,12 +1473,17 @@ fn add_gsettings_apply_button(_rawaccel_convert_gui: &mut RawaccelConvertGui, _u
 
 #[cfg(not(target_arch = "wasm32"))]
 fn apply_gsettings(rawaccel_convert_gui: &mut RawaccelConvertGui) {
+    let step = match gsettings_step_value(rawaccel_convert_gui) {
+        Some(some) => some,
+        None => {
+            rawaccel_convert_gui.gsettings_status = STEPS_NOT_A_NUMBER.to_string();
+            rawaccel_convert_gui.gsettings_failed = true;
+            return;
+        }
+    };
     //the profile is set last so the curve is never applied with stale points
     let gsettings_keys = [
-        (
-            "custom-accel-step",
-            gsettings_step_value(rawaccel_convert_gui),
-        ),
+        ("custom-accel-step", step),
         (
             "custom-accel-points",
             gsettings_points_value(rawaccel_convert_gui),
