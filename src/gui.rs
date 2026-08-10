@@ -89,10 +89,29 @@ impl Default for RawaccelConvertSettings {
     }
 }
 
+//the curve type, gain, cap type and scaling dropdowns live outside the settings strings,
+//so they are kept here as names to survive being saved and reloaded
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
+pub struct Favorite {
+    pub name: String,
+    pub settings: RawaccelConvertSettings,
+    pub curve_type: String,
+    pub cap_type: String,
+    pub gain: bool,
+    pub graph_scaling: String,
+    pub export_scaling: String,
+}
+
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct RawaccelConvertGui {
     settings: RawaccelConvertSettings,
+    favorites: Vec<Favorite>,
+
+    #[serde(skip)]
+    selected_favorite: Option<usize>,
+    #[serde(skip)]
+    favorite_name: String,
 
     #[serde(skip)]
     accel_args: AccelArgs,
@@ -122,6 +141,10 @@ impl Default for RawaccelConvertGui {
     fn default() -> Self {
         Self {
             settings: RawaccelConvertSettings::default(),
+            favorites: vec![],
+
+            selected_favorite: None,
+            favorite_name: String::default(),
 
             accel_args: AccelArgs::default(),
             export_accel_args_cache: AccelArgs::default(),
@@ -196,6 +219,12 @@ impl eframe::App for RawaccelConvertGui {
             .max_width(250.0)
             .resizable(false)
             .show(ctx, |ui| {
+                //added before the rest so it takes the bottom of the panel, and so a loaded
+                //favorite is applied before the fields below parse it
+                egui::TopBottomPanel::bottom("favorites_panel").show_inside(ui, |ui| {
+                    add_favorites(self, ui);
+                });
+
                 egui::Grid::new("rawaccel_convert_gui_grid").show(ui, |ui| {
                     add_dpi(self, ui);
                     ui.end_row();
@@ -1524,6 +1553,169 @@ fn apply_gsettings(rawaccel_convert_gui: &mut RawaccelConvertGui) {
         rawaccel_convert_gui.curvegen_export.points.len()
     );
     rawaccel_convert_gui.gsettings_failed = false;
+}
+
+fn curve_type_name(mode: &AccelMode) -> String {
+    return format!("{:?}", mode);
+}
+
+fn curve_type_from_name(name: &str) -> AccelMode {
+    match name {
+        "Linear" => return AccelMode::Linear,
+        "Classic" => return AccelMode::Classic,
+        "Jump" => return AccelMode::Jump,
+        "Natural" => return AccelMode::Natural,
+        "Synchronous" => return AccelMode::Synchronous,
+        "Power" => return AccelMode::Power,
+        "Motivity" => return AccelMode::Motivity,
+        "Lookup" => return AccelMode::Lookup,
+        "Windows" => return AccelMode::Windows,
+        _ => return AccelMode::Noaccel,
+    }
+}
+
+fn cap_type_from_name(name: &str) -> CapMode {
+    match name {
+        "Input" => return CapMode::Input,
+        "InputOutput" => return CapMode::InputOutput,
+        _ => return CapMode::Output,
+    }
+}
+
+fn save_favorite(rawaccel_convert_gui: &mut RawaccelConvertGui) {
+    let mut name = rawaccel_convert_gui.favorite_name.trim().to_string();
+    if name.is_empty() {
+        name = format!(
+            "{} {}",
+            curve_type_name(&rawaccel_convert_gui.accel_args.mode),
+            rawaccel_convert_gui.settings.dpi_string
+        );
+    }
+    let favorite = Favorite {
+        name: name.clone(),
+        settings: rawaccel_convert_gui.settings.clone(),
+        curve_type: curve_type_name(&rawaccel_convert_gui.accel_args.mode),
+        cap_type: format!("{:?}", rawaccel_convert_gui.accel_args.cap_mode),
+        gain: rawaccel_convert_gui.accel_args.gain,
+        graph_scaling: format!("{:?}", rawaccel_convert_gui.accel_args.point_scaling),
+        export_scaling: format!("{:?}", rawaccel_convert_gui.export_point_scaling),
+    };
+    rawaccel_convert_gui.favorite_name = name.clone();
+    //saving under a name already in the list replaces it
+    match rawaccel_convert_gui
+        .favorites
+        .iter()
+        .position(|favorite| favorite.name == name)
+    {
+        Some(index) => {
+            rawaccel_convert_gui.favorites[index] = favorite;
+            rawaccel_convert_gui.selected_favorite = Some(index);
+        }
+        None => {
+            rawaccel_convert_gui.favorites.push(favorite);
+            rawaccel_convert_gui.selected_favorite = Some(rawaccel_convert_gui.favorites.len() - 1);
+        }
+    }
+}
+
+fn load_favorite(rawaccel_convert_gui: &mut RawaccelConvertGui, index: usize) {
+    let favorite = match rawaccel_convert_gui.favorites.get(index) {
+        Some(some) => some.clone(),
+        None => return,
+    };
+    rawaccel_convert_gui.settings = favorite.settings;
+    rawaccel_convert_gui.accel_args.mode = curve_type_from_name(&favorite.curve_type);
+    rawaccel_convert_gui.accel_args.cap_mode = cap_type_from_name(&favorite.cap_type);
+    rawaccel_convert_gui.accel_args.gain = favorite.gain;
+    rawaccel_convert_gui.accel_args.point_scaling = favorite
+        .graph_scaling
+        .parse::<PointScaling>()
+        .unwrap_or(PointScaling::Sens);
+    rawaccel_convert_gui.export_point_scaling = favorite
+        .export_scaling
+        .parse::<PointScaling>()
+        .unwrap_or(PointScaling::Sens);
+    rawaccel_convert_gui.favorite_name = favorite.name;
+    rawaccel_convert_gui.selected_favorite = Some(index);
+}
+
+fn delete_favorite(rawaccel_convert_gui: &mut RawaccelConvertGui) {
+    let index = match rawaccel_convert_gui.selected_favorite {
+        Some(some) => some,
+        None => return,
+    };
+    if index >= rawaccel_convert_gui.favorites.len() {
+        return;
+    }
+    rawaccel_convert_gui.favorites.remove(index);
+    rawaccel_convert_gui.selected_favorite = None;
+    rawaccel_convert_gui.favorite_name = String::default();
+}
+
+fn add_favorites(rawaccel_convert_gui: &mut RawaccelConvertGui, ui: &mut egui::Ui) {
+    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+        ui.add_space(4.0);
+        ui.add_sized(
+            [ui.available_width(), 1.0],
+            egui::Label::new("Favorites").selectable(false),
+        );
+
+        let selected_name = match rawaccel_convert_gui.selected_favorite {
+            Some(index) => match rawaccel_convert_gui.favorites.get(index) {
+                Some(favorite) => favorite.name.clone(),
+                None => String::default(),
+            },
+            None => String::default(),
+        };
+        let favorite_names: Vec<String> = rawaccel_convert_gui
+            .favorites
+            .iter()
+            .map(|favorite| favorite.name.clone())
+            .collect();
+        let selected_favorite = rawaccel_convert_gui.selected_favorite;
+
+        let mut load_index: Option<usize> = None;
+        ui.push_id("favorites_dropdown", |ui| {
+            egui::ComboBox::from_label("")
+                .width(ui.available_width())
+                .selected_text(selected_name)
+                .show_ui(ui, |ui| {
+                    for (index, name) in favorite_names.iter().enumerate() {
+                        if ui
+                            .selectable_label(selected_favorite == Some(index), name)
+                            .clicked()
+                        {
+                            load_index = Some(index);
+                        }
+                    }
+                });
+        });
+        if let Some(index) = load_index {
+            load_favorite(rawaccel_convert_gui, index);
+        }
+
+        ui.add_sized(
+            [ui.available_width(), 1.0],
+            egui::TextEdit::singleline(&mut rawaccel_convert_gui.favorite_name).hint_text("name"),
+        );
+
+        ui.horizontal(|ui| {
+            let button_width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+            if ui
+                .add_sized([button_width, 1.0], egui::Button::new("Save"))
+                .clicked()
+            {
+                save_favorite(rawaccel_convert_gui);
+            }
+            if ui
+                .add_sized([button_width, 1.0], egui::Button::new("Delete"))
+                .clicked()
+            {
+                delete_favorite(rawaccel_convert_gui);
+            }
+        });
+        ui.add_space(4.0);
+    });
 }
 
 fn unselectable_warn_if_debug_build(ui: &mut egui::Ui) {
