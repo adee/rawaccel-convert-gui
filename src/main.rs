@@ -8,6 +8,9 @@ fn main() -> eframe::Result<()> {
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            //wayland has no protocol for a client to set its own icon, the compositor takes
+            //the icon and the name from the .desktop file whose basename matches this
+            .with_app_id("rawaccel-convert-gui")
             .with_inner_size([650.0, 650.0])
             .with_min_inner_size([650.0, 650.0])
             .with_icon(
