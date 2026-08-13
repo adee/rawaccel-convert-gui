@@ -100,6 +100,11 @@ pub struct Favorite {
     pub gain: bool,
     pub graph_scaling: String,
     pub export_scaling: String,
+    //defaulted so favorites saved before these existed still load
+    #[serde(default)]
+    pub freeze_libinput_steps: bool,
+    #[serde(default)]
+    pub libinput_steps: String,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -1599,6 +1604,8 @@ fn save_favorite(rawaccel_convert_gui: &mut RawaccelConvertGui) {
         gain: rawaccel_convert_gui.accel_args.gain,
         graph_scaling: format!("{:?}", rawaccel_convert_gui.accel_args.point_scaling),
         export_scaling: format!("{:?}", rawaccel_convert_gui.export_point_scaling),
+        freeze_libinput_steps: rawaccel_convert_gui.freeze_libinput_steps,
+        libinput_steps: rawaccel_convert_gui.libinput_steps.clone(),
     };
     rawaccel_convert_gui.favorite_name = name.clone();
     //saving under a name already in the list replaces it
@@ -1635,6 +1642,8 @@ fn load_favorite(rawaccel_convert_gui: &mut RawaccelConvertGui, index: usize) {
         .export_scaling
         .parse::<PointScaling>()
         .unwrap_or(PointScaling::Sens);
+    rawaccel_convert_gui.freeze_libinput_steps = favorite.freeze_libinput_steps;
+    rawaccel_convert_gui.libinput_steps = favorite.libinput_steps;
     rawaccel_convert_gui.favorite_name = favorite.name;
     rawaccel_convert_gui.selected_favorite = Some(index);
 }
