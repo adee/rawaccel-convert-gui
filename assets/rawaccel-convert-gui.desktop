@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Rawaccel Convert GUI
+Comment=Generate rawaccel and libinput mouse acceleration curves
+Exec=rawaccel_convert_gui
+Icon=rawaccel-convert-gui
+Terminal=false
+Categories=Utility;Settings;
+StartupWMClass=rawaccel-convert-gui

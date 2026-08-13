@@ -16,6 +16,8 @@ Curve generation comes from [Rawaccel Convert](https://github.com/Kuuuube/rawacc
 
 - `Windows` curve type, reproducing the windows `Enhance pointer precision` curve from the `SmoothMouseXCurve` and `SmoothMouseYCurve` registry values. Ported from [yinonburgansky's windows acceleration function](https://gist.github.com/yinonburgansky/7be4d0489a0df8c06a923240b8eb0191).
 
+- Favorites at the bottom of the side panel. `Save` stores every parameter under the name in the box, including the curve type and a frozen step size, the dropdown loads one back, `Delete` removes it. Saving under a name already in the list replaces it. Favorites are kept with the rest of the app state in `~/.local/share/rawaccel-convert-gui/app.ron`.
+
 ## GNOME requirement
 
 The gsettings buttons write these keys of `org.gnome.desktop.peripherals.mouse`:
@@ -39,6 +41,12 @@ cargo build --release
 The binary is written to `target/release/rawaccel_convert_gui`.
 
 No web build is published for this port, since the upstream web app does not carry any of these changes. `trunk serve` still builds one locally.
+
+### Desktop entry
+
+Wayland has no protocol for a client to set its own icon or name. The compositor matches the window's app id, `rawaccel-convert-gui`, against installed desktop entries and takes both from there, so a window started from a build directory shows no icon and is titled `Unknown`.
+
+Install `assets/rawaccel-convert-gui.desktop` to `/usr/share/applications/` and `assets/icon-256.png` to `/usr/share/icons/hicolor/256x256/apps/rawaccel-convert-gui.png` to get the icon and title.
 
 ## Usage
 
