@@ -1,6 +1,6 @@
 # Rawaccel Convert GUI
 
-Personal port of [Kuuuube's Rawaccel Convert GUI](https://github.com/Kuuuube/rawaccel-convert-gui), kept for local use on a GNOME desktop running mutter patched for custom acceleration.
+Personal port of [Kuuuube's Rawaccel Convert GUI](https://github.com/Kuuuube/rawaccel-convert-gui), kept for local use on a GNOME desktop with custom pointer acceleration (mutter 51 or newer).
 
 This is not a general release and it does not track upstream. If you are not me, go to the original.
 
@@ -22,13 +22,12 @@ Curve generation comes from [Rawaccel Convert](https://github.com/Kuuuube/rawacc
 
 The gsettings buttons write these keys of `org.gnome.desktop.peripherals.mouse`:
 
-| Key | Type |
+| Key | Value |
 | --- | --- |
-| `custom-accel-step` | double |
-| `custom-accel-points` | array of doubles |
+| `custom-accel-config` | `{'pointer-step': <step>, 'pointer-speeds': <[points]>}` |
 | `accel-profile` | `'custom'` |
 
-Upstream gsettings-desktop-schemas defines none of them, and its `accel-profile` has no `custom` value, so a mutter build patched for custom acceleration is required. On a stock GNOME the buttons fail and report the error gsettings gives back.
+`custom-accel-config` is an `a{sv}` dictionary, supported upstream since mutter 51. Older GNOME releases do not have it, and on those the buttons fail and report the error gsettings gives back.
 
 Everything else in the app works without any of this. Use `Copy gsettings Commands`, or the points and steps boxes, to apply the curve by other means.
 
